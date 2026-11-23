@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Greenhouse IoT Dashboard</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- Thư viện MQTT.js kết nối WSS -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- 1. HEADER & TRẠNG THÁI KẾT NỐI -->
+    <header class="app-header">
+      <div>
+        <h1>SMART GREENHOUSE IOT</h1>
+        <p class="subtitle">Hệ thống giám sát &amp; điều khiển nhà kính rau mầm (Arduino + ESP32-S3)</p>
+      </div>
+      <div class="status-group">
+        <span id="mqttBadge" class="badge offline">MQTT: Đang kết nối...</span>
+        <span id="gatewayBadge" class="badge warning">Gateway: Chờ dữ liệu</span>
+      </div>
+    </header>
+
+    <!-- 2. DẢI CẢNH BÁO AN TOÀN -->
+    <section class="alerts">
+      <div id="estopBanner" class="alert-banner alert-danger hidden">
+        CẢNH BÁO: HỆ THỐNG ĐANG KHÓA DỪNG KHẨN CẤP (E-STOP)! Bơm nước đã ngắt cưỡng bức.
+      </div>
+      <div id="sensorErrBanner" class="alert-banner alert-warning hidden">
+        CẢNH BÁO: LỖI KẾT NỐI CẢM BIẾN I2C (SHT31D / BH1750)! Bơm đã tự động ngắt an toàn.
+      </div>
+    </section>
+
+    <!-- 3. LƯỚI 5 THẺ THÔNG SỐ CẢM BIẾN -->
+    <section class="sensor-grid">
+      <div class="card">
+        <span class="card-label">Nhiệt độ không khí</span>
+        <strong class="card-value" id="valTemp">-- °C</strong>
+        <small class="card-meta">Quạt: Bật &gt; 32°C | Tắt &lt; 30°C</small>
+      </div>
+      <div class="card">
+        <span class="card-label">Độ ẩm không khí</span>
+        <strong class="card-value" id="valHum">-- %</strong>
+        <small class="card-meta">Cảm biến SHT31D (0x44)</small>
+      </div>
+      <div class="card">
+        <span class="card-label">Cường độ ánh sáng</span>
+        <strong class="card-value" id="valLux">-- lx</strong>
+        <small class="card-meta">Đèn: Bật &lt; 400 lx | Tắt &gt; 500 lx</small>
+      </div>
+      <div class="card">
+        <span class="card-label">Độ ẩm đất 1 (Kalman 1D)</span>
+        <strong class="card-value" id="valSoil1">-- %</strong>
+        <small class="card-meta">Bơm: Bật &lt; 40% | Tắt &gt; 55%</small>
+      </div>
+      <div class="card">
+        <span class="card-label">Độ ẩm đất 2 (Kalman 1D)</span>
+        <strong class="card-value" id="valSoil2">-- %</strong>
+        <small class="card-meta">Kích hoạt theo min(Đất 1, Đất 2)</small>
+      </div>
+    </section>
+
+    <!-- 4. BẢNG ĐIỀU KHIỂN CHẤP HÀNH 2 CHIỀU -->
+    <section class="panel control-panel">
+      <h2>Điều khiển thiết bị (12V DC)</h2>
+
+      <div class="control-row">
+        <div>
+          <strong>Dừng khẩn cấp cưỡng bức (E-STOP)</strong>
+          <small>Ngắt bơm tức thời &lt; 10 ms, ưu tiên cao nhất</small>
+        </div>
+        <button id="btnEstop" class="btn btn-estop-off">E-STOP: OFF</button>
+      </div>
+
+      <div class="control-row">
+        <div>
+          <strong>Chế độ vận hành</strong>
+          <small>Tự động vùng trễ (AUTO) / Điều khiển tay (MANUAL)</small>
+        </div>
+        <button id="btnMode" class="btn btn-auto">AUTO</button>
+      </div>
+
+      <div class="control-row">
+        <div>
+          <strong>Relay 1 – Bơm nước chính 12V</strong>
+          <small>Giới hạn tối đa 30s / nghỉ thẩm thấu 60s</small>
+        </div>
+        <button id="btnR1" class="btn btn-off">OFF</button>
+      </div>
+
+      <div class="control-row">
+        <div>
+          <strong>Relay 2 – 2 Đèn LED quang hợp 12V</strong>
+          <small>Chiếu sáng bổ sung cho rau mầm</small>
+        </div>
+        <button id="btnR2" class="btn btn-off">OFF</button>
+      </div>
+
+      <div class="control-row">
+        <div>
+          <strong>Relay 3 – Quạt thông gió / Bơm phụ 12V</strong>
+          <small>Làm mát nhà kính khi nhiệt độ tăng cao</small>
+        </div>
+        <button id="btnR3" class="btn btn-off">OFF</button>
+      </div>
+    </section>
+
+    <!-- 5. KHUNG CHỜ BIỂU ĐỒ THỜI GIAN THỰC -->
+    <section class="panel chart-panel">
+      <h2>Biểu đồ theo dõi vi khí hậu (Realtime)</h2>
+      <div id="chartPlaceholder" class="chart-placeholder">
+        Khu vực biểu đồ Nhiệt độ &amp; Độ ẩm đất 1/2 (sẵn sàng tích hợp Chart.js)
+      </div>
+    </section>
+
+    <footer class="app-footer">
+      <span id="lastUpdate">Chưa nhận gói tin nào từ Gateway ESP32-S3</span>
+    </footer>
+  </div>
+
+  <!-- Nạp các module theo đúng thứ tự phụ thuộc -->
+  <script src="js/config.js"></script>
+  <script src="js/mqttClient.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
